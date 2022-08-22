@@ -799,17 +799,6 @@ namespace Myra.Graphics2D.UI
 		[XmlIgnore]
 		internal bool ContainsMouse => Desktop != null && ContainsGlobalPoint(Desktop.MousePosition);
 
-		[Browsable(false)]
-		[XmlIgnore]
-		public Rectangle ActualBounds
-		{
-			get
-			{
-				return _actualBounds;
-			}
-			set => _actualBounds = value;
-		}
-    
 		internal bool ContainsTouch => Desktop != null && ContainsGlobalPoint(Desktop.TouchPosition);
 
 		[Browsable(false)]
