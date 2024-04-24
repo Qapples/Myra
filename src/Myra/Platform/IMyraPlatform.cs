@@ -4,11 +4,11 @@ using System.Drawing;
 
 namespace Myra.Platform
 {
-	public interface IMyraPlatform: ITexture2DManager
+	public interface IMyraPlatform
 	{
 		Point ViewSize { get; }
 
-		IMyraRenderer CreateRenderer();
+		IMyraRenderer Renderer { get; }
 
 		MouseInfo GetMouseInfo();
 
@@ -19,6 +19,7 @@ namespace Myra.Platform
 		/// </summary>
 		/// <param name="keys"></param>
 		void SetKeysDown(bool[] keys);
+		void SetMouseCursorType(MouseCursorType mouseCursorType);
 
 		TouchCollection GetTouchState();
 	}

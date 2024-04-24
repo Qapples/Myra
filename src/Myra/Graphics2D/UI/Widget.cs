@@ -18,17 +18,11 @@ using System.Numerics;
 using System.Drawing;
 using Myra.Platform;
 using Matrix = System.Numerics.Matrix3x2;
+using Color = FontStashSharp.FSColor;
 #endif
 
 namespace Myra.Graphics2D.UI
 {
-	public enum MouseWheelFocusType
-	{
-		None,
-		Hover,
-		Focus
-	}
-
 	[Flags]
 	public enum DragDirection
 	{
@@ -38,20 +32,19 @@ namespace Myra.Graphics2D.UI
 		Both = Vertical | Horizontal
 	}
 
-	public class Widget : BaseObject
+	public partial class Widget : BaseObject, ITransformable
 	{
-		private Point? _startPos;
+		private MouseCursorType? _mouseCursorType;
+		private Vector2? _startPos;
+		private Point _startLeftTop;
 		private Thickness _margin, _borderThickness, _padding;
 		private int _left, _top;
 		private int? _minWidth, _minHeight, _maxWidth, _maxHeight, _width, _height;
-		private int _gridColumn, _gridRow, _gridColumnSpan = 1, _gridRowSpan = 1;
 		private int _zIndex;
 		private HorizontalAlignment _horizontalAlignment = HorizontalAlignment.Left;
 		private VerticalAlignment _verticalAlignment = VerticalAlignment.Top;
-		private bool _isModal = false;
 		private bool _measureDirty = true;
 		private bool _arrangeDirty = true;
-		private bool _active = false;
 		private Desktop _desktop;
 
 		private Point _lastMeasureSize;
@@ -63,7 +56,7 @@ namespace Myra.Graphics2D.UI
 
 		private float _opacity = 1.0f;
 
-		private bool _isMouseInside, _enabled;
+		private bool _enabled;
 		private bool _isKeyboardFocused = false;
 		private Vector2 _scale = Vector2.One;
 		private Vector2 _transformOrigin = new Vector2(0.5f, 0.5f);
@@ -232,23 +225,6 @@ namespace Myra.Graphics2D.UI
 			}
 		}
 
-		[Obsolete("Use Padding")]
-		[Browsable(false)]
-		public int PaddingLeft
-		{
-			get
-			{
-				return Padding.Left;
-			}
-
-			set
-			{
-				var p = Padding;
-				p.Left = value;
-				Padding = p;
-			}
-		}
-
 		[Category("Layout")]
 		[DesignerFolded]
 		public Thickness Margin
@@ -270,7 +246,10 @@ namespace Myra.Graphics2D.UI
 			}
 		}
 
-		[Category("Appearance")]
+		[Category("Layout")]
+		public IBrush Border { get; set; }
+
+		[Category("Layout")]
 		[DesignerFolded]
 		public Thickness BorderThickness
 		{
@@ -348,101 +327,42 @@ namespace Myra.Graphics2D.UI
 			}
 		}
 
-		[Category("Layout")]
-		[DefaultValue(0)]
+		[Browsable(false)]
+		[Obsolete("Use Grid.GetColumn/Grid.SetColumn")]
+
 		public int GridColumn
 		{
-			get { return _gridColumn; }
-
-			set
-			{
-				if (value == _gridColumn)
-				{
-					return;
-				}
-
-				if (value < 0)
-				{
-					throw new ArgumentOutOfRangeException("value");
-				}
-
-				_gridColumn = value;
-				InvalidateMeasure();
-			}
+			get => Grid.GetColumn(this);
+			set => Grid.SetColumn(this, value);
 		}
 
-		[Category("Layout")]
-		[DefaultValue(0)]
+		[Browsable(false)]
+		[Obsolete("Use Grid.GetColumn/Grid.SetColumn")]
 		public int GridRow
 		{
-			get { return _gridRow; }
-
-			set
-			{
-				if (value == _gridRow)
-				{
-					return;
-				}
-
-				if (value < 0)
-				{
-					throw new ArgumentOutOfRangeException("value");
-				}
-
-				_gridRow = value;
-				InvalidateMeasure();
-			}
+			get => Grid.GetRow(this);
+			set => Grid.SetRow(this, value);
 		}
 
-		[Category("Layout")]
-		[DefaultValue(1)]
+		[Browsable(false)]
+		[Obsolete("Use Grid.GetColumnSpan/Grid.SetColumnSpan")]
 		public int GridColumnSpan
 		{
-			get { return _gridColumnSpan; }
-
-			set
-			{
-				if (value == _gridColumnSpan)
-				{
-					return;
-				}
-
-				if (value < 0)
-				{
-					throw new ArgumentOutOfRangeException("value");
-				}
-
-				_gridColumnSpan = value;
-				InvalidateMeasure();
-			}
+			get => Grid.GetColumnSpan(this);
+			set => Grid.SetColumnSpan(this, value);
 		}
 
-		[Category("Layout")]
-		[DefaultValue(1)]
+		[Browsable(false)]
+		[Obsolete("Use Grid.GetColumnSpan/Grid.SetColumnSpan")]
 		public int GridRowSpan
 		{
-			get { return _gridRowSpan; }
-
-			set
-			{
-				if (value == _gridRowSpan)
-				{
-					return;
-				}
-
-				if (value < 0)
-				{
-					throw new ArgumentOutOfRangeException("value");
-				}
-
-				_gridRowSpan = value;
-				InvalidateMeasure();
-			}
+			get => Grid.GetRowSpan(this);
+			set => Grid.SetRowSpan(this, value);
 		}
 
 		[Category("Behavior")]
 		[DefaultValue(true)]
-		public virtual bool Enabled
+		public bool Enabled
 		{
 			get
 			{
@@ -458,13 +378,18 @@ namespace Myra.Graphics2D.UI
 
 				_enabled = value;
 
+				foreach (var item in ChildrenCopy)
+				{
+					item.Enabled = value;
+				}
+
 				EnabledChanged.Invoke(this);
 			}
 		}
 
 		[Category("Behavior")]
 		[DefaultValue(true)]
-		public virtual bool Visible
+		public bool Visible
 		{
 			get { return _visible; }
 
@@ -476,8 +401,8 @@ namespace Myra.Graphics2D.UI
 				}
 
 				_visible = value;
-				IsMouseInside = false;
-				IsTouchInside = false;
+				LocalMousePosition = null;
+				LocalTouchPosition = null;
 
 				OnVisibleChanged();
 			}
@@ -507,6 +432,31 @@ namespace Myra.Graphics2D.UI
 				InvalidateMeasure();
 			}
 		}
+
+		[Category("Behavior")]
+		[DefaultValue(null)]
+		public virtual MouseCursorType? MouseCursor
+		{
+			get => _mouseCursorType;
+			set
+			{
+				if (value == _mouseCursorType)
+				{
+					return;
+				}
+
+				_mouseCursorType = value;
+				foreach (var child in Children)
+				{
+					child.MouseCursor = value;
+				}
+			}
+		}
+
+		[Category("Behavior")]
+		[DefaultValue(null)]
+		public string Tooltip { get; set; }
+
 
 		[Category("Transform")]
 		[DefaultValue("1, 1")]
@@ -599,15 +549,16 @@ namespace Myra.Graphics2D.UI
 						_desktop.FocusedKeyboardWidget = null;
 					}
 
-					if (_desktop.MouseInsideWidget == this)
+					if (_desktop.Tooltip != null && _desktop.Tooltip.Tag == this)
 					{
-						_desktop.MouseInsideWidget = null;
+						_desktop.HideTooltip();
 					}
 				}
 
+				LocalMousePosition = null;
+				LocalTouchPosition = null;
+
 				_desktop = value;
-				IsMouseInside = false;
-				IsTouchInside = false;
 
 				if (_desktop != null)
 				{
@@ -615,46 +566,19 @@ namespace Myra.Graphics2D.UI
 				}
 
 				SubscribeOnTouchMoved(IsPlaced && IsDraggable);
+
+				foreach (var child in ChildrenCopy)
+				{
+					child.Desktop = value;
+				}
+
 				OnPlacedChanged();
 			}
 		}
 
 		[XmlIgnore]
 		[Browsable(false)]
-		public bool IsModal
-		{
-			get { return _isModal; }
-
-			set
-			{
-				if (_isModal == value)
-				{
-					return;
-				}
-
-				_isModal = value;
-				InvalidateMeasure();
-			}
-		}
-
-		protected internal bool Active
-		{
-			get
-			{
-				return _active;
-			}
-
-			set
-			{
-				if (_active == value)
-				{
-					return;
-				}
-
-				_active = value;
-				OnActiveChanged();
-			}
-		}
+		public bool IsModal { get; set; }
 
 		[Category("Appearance")]
 		[DefaultValue(1.0f)]
@@ -696,12 +620,6 @@ namespace Myra.Graphics2D.UI
 		public IBrush FocusedBackground { get; set; }
 
 		[Category("Appearance")]
-		public IBrush Border
-		{
-			get; set;
-		}
-
-		[Category("Appearance")]
 		public IBrush OverBorder
 		{
 			get; set;
@@ -725,50 +643,7 @@ namespace Myra.Graphics2D.UI
 
 		[Browsable(false)]
 		[XmlIgnore]
-		public bool IsMouseInside
-		{
-			get => _isMouseInside;
-			set
-			{
-				if (value && _isMouseInside)
-				{
-					if (Desktop != null)
-					{
-						Desktop.MouseInsideWidget = this;
-					}
-
-					OnMouseMoved();
-				}
-				else if (value && !_isMouseInside)
-				{
-					if (Desktop != null)
-					{
-						Desktop.MouseInsideWidget = this;
-					}
-
-					OnMouseEntered();
-				}
-				else if (!value && _isMouseInside)
-				{
-					if (Desktop != null && Desktop.MouseInsideWidget == this)
-					{
-						Desktop.MouseInsideWidget = null;
-					}
-
-					OnMouseLeft();
-				}
-
-				_isMouseInside = value;
-			}
-		}
-
-		[Browsable(false)]
-		[XmlIgnore]
-		public bool IsTouchInside { get; private set; }
-
-		[Browsable(false)]
-		[XmlIgnore]
-		public Container Parent { get; internal set; }
+		public Widget Parent { get; internal set; }
 
 		[Browsable(false)]
 		[XmlIgnore]
@@ -797,12 +672,6 @@ namespace Myra.Graphics2D.UI
 
 		[Browsable(false)]
 		[XmlIgnore]
-		internal bool ContainsMouse => Desktop != null && ContainsGlobalPoint(Desktop.MousePosition);
-
-		internal bool ContainsTouch => Desktop != null && ContainsGlobalPoint(Desktop.TouchPosition);
-
-		[Browsable(false)]
-		[XmlIgnore]
 		public Rectangle ContainerBounds => _containerBounds;
 
 		[Browsable(false)]
@@ -827,10 +696,6 @@ namespace Myra.Graphics2D.UI
 
 		[Browsable(false)]
 		[XmlIgnore]
-		internal protected virtual MouseWheelFocusType MouseWheelFocusType => MouseWheelFocusType.None;
-
-		[Browsable(false)]
-		[XmlIgnore]
 		public bool IsKeyboardFocused
 		{
 			get
@@ -847,14 +712,6 @@ namespace Myra.Graphics2D.UI
 
 				_isKeyboardFocused = value;
 				KeyboardFocusChanged?.Invoke(this, EventArgs.Empty);
-			}
-		}
-
-		protected virtual bool UseHoverRenderable
-		{
-			get
-			{
-				return IsMouseInside && Active;
 			}
 		}
 
@@ -893,32 +750,7 @@ namespace Myra.Graphics2D.UI
 			}
 		}
 
-		public event EventHandler PlacedChanged;
-		public event EventHandler VisibleChanged;
-		public event EventHandler EnabledChanged;
-
-		public event EventHandler LocationChanged;
-		public event EventHandler SizeChanged;
-		public event EventHandler ArrangeUpdated;
-
-		public event EventHandler MouseLeft;
-		public event EventHandler MouseEntered;
-		public event EventHandler MouseMoved;
-
-		public event EventHandler TouchLeft;
-		public event EventHandler TouchEntered;
-		public event EventHandler TouchMoved;
-		public event EventHandler TouchDown;
-		public event EventHandler TouchUp;
-		public event EventHandler TouchDoubleClick;
-
-		public event EventHandler KeyboardFocusChanged;
-
-		public event EventHandler<GenericEventArgs<float>> MouseWheelChanged;
-
-		public event EventHandler<GenericEventArgs<Keys>> KeyUp;
-		public event EventHandler<GenericEventArgs<Keys>> KeyDown;
-		public event EventHandler<GenericEventArgs<char>> Char;
+		protected virtual bool UseOverBackground => IsMouseInside;
 
 		[Browsable(false)]
 		[XmlIgnore]
@@ -929,6 +761,8 @@ namespace Myra.Graphics2D.UI
 			Visible = true;
 			Enabled = true;
 			DragHandle = this;
+
+			Children.CollectionChanged += ChildrenOnCollectionChanged;
 		}
 
 		public virtual IBrush GetCurrentBackground()
@@ -943,7 +777,7 @@ namespace Myra.Graphics2D.UI
 			{
 				result = FocusedBackground;
 			}
-			else if (UseHoverRenderable && OverBackground != null)
+			else if (UseOverBackground && OverBackground != null)
 			{
 				result = OverBackground;
 			}
@@ -963,7 +797,7 @@ namespace Myra.Graphics2D.UI
 			{
 				result = FocusedBorder;
 			}
-			else if (UseHoverRenderable && OverBorder != null)
+			else if (IsMouseInside && OverBorder != null)
 			{
 				result = OverBorder;
 			}
@@ -973,12 +807,7 @@ namespace Myra.Graphics2D.UI
 
 		public void BringToFront()
 		{
-			if (Parent != null && !(Parent is IMultipleItemsContainer))
-			{
-				return;
-			}
-
-			var widgets = (Parent as IMultipleItemsContainer)?.Widgets ?? Desktop.Widgets;
+			var widgets = Parent != null ? Parent.Children : Desktop.Widgets;
 
 			if (widgets[widgets.Count - 1] == this) return;
 
@@ -988,12 +817,7 @@ namespace Myra.Graphics2D.UI
 
 		public void BringToBack()
 		{
-			if (Parent != null && !(Parent is IMultipleItemsContainer))
-			{
-				return;
-			}
-
-			var widgets = (Parent as IMultipleItemsContainer)?.Widgets ?? Desktop.Widgets;
+			var widgets = Parent != null ? Parent.Children : Desktop.Widgets;
 
 			if (widgets[widgets.Count - 1] == this) return;
 
@@ -1007,6 +831,18 @@ namespace Myra.Graphics2D.UI
 			{
 				return;
 			}
+
+			if (!string.IsNullOrEmpty(Tooltip) && (Desktop.Tooltip == null || Desktop.Tooltip.Tag != this) &&
+				_lastMouseMovement != null && (DateTime.Now - _lastMouseMovement.Value).TotalMilliseconds > MyraEnvironment.TooltipDelayInMs)
+			{
+				var pos = Desktop.MousePosition;
+				pos.X += MyraEnvironment.TooltipOffset.X;
+				pos.Y += MyraEnvironment.TooltipOffset.Y;
+				Desktop.ShowTooltip(this, pos);
+				_lastMouseMovement = null;
+			}
+
+			UpdateArrange();
 
 			var oldTransform = context.Transform;
 
@@ -1099,6 +935,10 @@ namespace Myra.Graphics2D.UI
 
 		public virtual void InternalRender(RenderContext context)
 		{
+			foreach (var child in ChildrenCopy)
+			{
+				child.Render(context);
+			}
 		}
 
 		public Point Measure(Point availableSize)
@@ -1138,6 +978,9 @@ namespace Myra.Graphics2D.UI
 			// So now InternalMeasure is called every time
 			result = InternalMeasure(availableSize);
 
+			result.X += MBPWidth;
+			result.Y += MBPHeight;
+
 			// Result lerp
 			if (Width.HasValue)
 			{
@@ -1173,19 +1016,11 @@ namespace Myra.Graphics2D.UI
 				}
 			}
 
-			result.X += MBPWidth;
-			result.Y += MBPHeight;
-
 			_lastMeasureSize = result;
 			_lastMeasureAvailableSize = availableSize;
 			_measureDirty = false;
 
 			return result;
-		}
-
-		protected virtual Point InternalMeasure(Point availableSize)
-		{
-			return Mathematics.PointZero;
 		}
 
 		public void Arrange(Rectangle containerBounds)
@@ -1253,48 +1088,30 @@ namespace Myra.Graphics2D.UI
 			_arrangeDirty = false;
 		}
 
-		public virtual void InternalArrange()
+		protected virtual void InternalArrange()
 		{
+			if (ChildrenLayout == null)
+			{
+				return;
+			}
+
+			ChildrenLayout.Arrange(ChildrenCopy, ActualBounds);
+		}
+
+		protected virtual Point InternalMeasure(Point availableSize)
+		{
+			if (ChildrenLayout == null)
+			{
+				return Mathematics.PointZero;
+			}
+
+			return ChildrenLayout.Measure(ChildrenCopy, availableSize);
 		}
 
 
 		public void InvalidateArrange()
 		{
 			_arrangeDirty = true;
-		}
-
-		private Widget FindWidgetBy(Func<Widget, bool> finder)
-		{
-			if (finder(this))
-			{
-				return this;
-			}
-
-			var asContainer = this as Container;
-			if (asContainer != null)
-			{
-				foreach (var widget in asContainer.ChildrenCopy)
-				{
-					var result = widget.FindWidgetBy(finder);
-					if (result != null)
-					{
-						return result;
-					}
-				}
-			}
-
-			return null;
-		}
-
-		/// <summary>
-		/// Finds a widget by id
-		/// Returns null if not found
-		/// </summary>
-		/// <param name="id"></param>
-		/// <returns></returns>
-		public Widget FindWidgetById(string id)
-		{
-			return FindWidgetBy(w => w.Id == id);
 		}
 
 		/// <summary>
@@ -1305,7 +1122,7 @@ namespace Myra.Graphics2D.UI
 		/// <returns></returns>
 		public Widget EnsureWidgetById(string id)
 		{
-			var result = FindWidgetById(id);
+			var result = FindChildById(id);
 			if (result == null)
 			{
 				throw new Exception(string.Format($"Could not find widget with id {id}"));
@@ -1318,6 +1135,11 @@ namespace Myra.Graphics2D.UI
 		{
 			_transform = null;
 			_inverseMatrixDirty = true;
+
+			foreach (var child in ChildrenCopy)
+			{
+				child.InvalidateTransform();
+			}
 		}
 
 		public virtual void InvalidateMeasure()
@@ -1379,75 +1201,6 @@ namespace Myra.Graphics2D.UI
 		{
 		}
 
-		public virtual void OnMouseLeft()
-		{
-			MouseLeft.Invoke(this);
-		}
-
-		public virtual void OnMouseEntered()
-		{
-			MouseEntered.Invoke(this);
-		}
-
-		public virtual void OnMouseMoved()
-		{
-			MouseMoved.Invoke(this);
-		}
-
-		public virtual void OnTouchDoubleClick()
-		{
-			TouchDoubleClick.Invoke(this);
-		}
-
-		public virtual void OnMouseWheel(float delta)
-		{
-			MouseWheelChanged.Invoke(this, delta);
-		}
-
-		public virtual void OnTouchLeft()
-		{
-			IsTouchInside = false;
-			TouchLeft.Invoke(this);
-		}
-
-		public virtual void OnTouchEntered()
-		{
-			IsTouchInside = true;
-			TouchEntered.Invoke(this);
-		}
-
-		public virtual void OnTouchMoved()
-		{
-			IsTouchInside = true;
-			TouchMoved.Invoke(this);
-		}
-
-		public virtual void OnTouchDown()
-		{
-			IsTouchInside = true;
-
-			if (Enabled && AcceptsKeyboardFocus)
-			{
-				Desktop.FocusedKeyboardWidget = this;
-			}
-
-			if (DragHandle != null && DragHandle.ContainsTouch)
-			{
-				var touchPos = Desktop.TouchPosition;
-				_startPos = new Point(touchPos.X - Left,
-						touchPos.Y - Top);
-			}
-
-			TouchDown.Invoke(this);
-		}
-
-		public virtual void OnTouchUp()
-		{
-			_startPos = null;
-			IsTouchInside = false;
-			TouchUp.Invoke(this);
-		}
-
 		protected void FireKeyDown(Keys k)
 		{
 			KeyDown.Invoke(this, k);
@@ -1489,10 +1242,6 @@ namespace Myra.Graphics2D.UI
 			IsKeyboardFocused = true;
 		}
 
-		protected internal virtual void OnActiveChanged()
-		{
-		}
-
 		public void RemoveFromParent()
 		{
 			if (Parent == null)
@@ -1500,7 +1249,7 @@ namespace Myra.Graphics2D.UI
 				return;
 			}
 
-			Parent.RemoveChild(this);
+			Parent.Children.Remove(this);
 		}
 
 		public void RemoveFromDesktop()
@@ -1553,25 +1302,25 @@ namespace Myra.Graphics2D.UI
 
 		private void DesktopOnTouchMoved(object sender, EventArgs args)
 		{
-			if (_startPos == null || !IsDraggable)
+			if (_startPos == null || !IsDraggable || Desktop == null)
 			{
 				return;
 			}
 
-			var position = new Point(Desktop.TouchPosition.X - _startPos.Value.X,
-				Desktop.TouchPosition.Y - _startPos.Value.Y);
+			var parent = Parent != null ? (ITransformable)Parent : Desktop;
+			var newPos = parent.ToLocal(new Vector2(Desktop.TouchPosition.Value.X, Desktop.TouchPosition.Value.Y));
+			var delta = newPos - _startPos.Value;
 
-			int newLeft = Left;
-			int newTop = Top;
-
+			var newLeft = Left;
+			var newTop = Top;
 			if (DragDirection.HasFlag(DragDirection.Horizontal))
 			{
-				newLeft = position.X;
+				newLeft = _startLeftTop.X + (int)delta.X;
 			}
 
 			if (DragDirection.HasFlag(DragDirection.Vertical))
 			{
-				newTop = position.Y;
+				newTop = _startLeftTop.Y + (int)delta.Y;
 			}
 
 			var parentBounds = Parent != null ? Parent.Bounds : Desktop.InternalBounds;
@@ -1622,15 +1371,115 @@ namespace Myra.Graphics2D.UI
 
 		public Point ToLocal(Point pos) => ToLocal(new Vector2(pos.X, pos.Y)).ToPoint();
 
-		public bool ContainsGlobalPoint(Point pos)
+		public bool ContainsGlobalPoint(Point globalPos)
 		{
-			var localPos = ToLocal(pos);
+			var localPos = ToLocal(globalPos);
 			return BorderBounds.Contains(localPos);
 		}
 
 		private void DesktopTouchUp(object sender, EventArgs args)
 		{
 			_startPos = null;
+		}
+
+		public virtual Widget HitTest(Point p)
+		{
+			if (Desktop == null || !Visible || !ContainsGlobalPoint(p))
+			{
+				return null;
+			}
+
+			Widget result = null;
+			for (var i = _childrenCopy.Count - 1; i >= 0; i--)
+			{
+				var child = _childrenCopy[i];
+				result = child.HitTest(p);
+				if (result != null)
+				{
+					break;
+				}
+			}
+
+			var localPos = ToLocal(p);
+			if (result == null && !InputFallsThrough(localPos))
+			{
+				result = this;
+			}
+
+			return result;
+		}
+
+		public virtual bool InputFallsThrough(Point localPos) => false;
+
+		public Widget Clone()
+		{
+			// Firstly try to use parameterless constructor
+			var type = GetType();
+			var constructor = type.GetConstructor(Type.EmptyTypes);
+
+			Widget result;
+			if (constructor != null)
+			{
+				result = (Widget)constructor.Invoke(new object[0]);
+			}
+			else
+			{
+				// Then string constructor
+				result = (Widget)Activator.CreateInstance(GetType(), (string)null);
+			}
+
+			result.CopyFrom(this);
+
+			// Copy attached properties
+			foreach(var pair in AttachedPropertiesValues)
+			{
+				result.AttachedPropertiesValues[pair.Key] = pair.Value;
+			}
+
+			return result;
+		}
+
+		protected internal virtual void CopyFrom(Widget w)
+		{
+			StyleName = w.StyleName;
+			Left = w.Left;
+			Top = w.Top;
+			MinWidth = w.MinWidth;
+			MaxWidth = w.MaxWidth;
+			Width = w.Width;
+			MinHeight = w.MinHeight;
+			MaxHeight = w.MaxHeight;
+			Height = w.Height;
+			Margin = w.Margin;
+			Border = w.Border;
+			BorderThickness = w.BorderThickness;
+			Padding = w.Padding;
+			HorizontalAlignment = w.HorizontalAlignment;
+			VerticalAlignment = w.VerticalAlignment;
+			Enabled = w.Enabled;
+			Visible = w.Visible;
+			DragDirection = w.DragDirection;
+			ZIndex = w.ZIndex;
+			MouseCursor = w.MouseCursor;
+			Tooltip = w.Tooltip;
+			Scale = w.Scale;
+			TransformOrigin = w.TransformOrigin;
+			Rotation = w.Rotation;
+			DragHandle = w.DragHandle;
+			IsModal = w.IsModal;
+			Opacity = w.Opacity;
+			Background = w.Background;
+			OverBackground = w.OverBackground;
+			DisabledBackground = w.DisabledBackground;
+			FocusedBackground = w.FocusedBackground;
+			OverBorder = w.OverBorder;
+			DisabledBorder = w.DisabledBorder;
+			FocusedBorder = w.FocusedBorder;
+			ClipToBounds = w.ClipToBounds;
+			Tag = w.Tag;
+			AcceptsKeyboardFocus = w.AcceptsKeyboardFocus;
+			BeforeRender = w.BeforeRender;
+			AfterRender = w.AfterRender;
 		}
 	}
 }

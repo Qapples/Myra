@@ -6,6 +6,12 @@ using Microsoft.Xna.Framework;
 using Stride.Core.Mathematics;
 #else
 using System.Drawing;
+using System.Numerics;
+using Myra.Platform;
+using Color = FontStashSharp.FSColor;
+using Texture2D = System.Object;
+using Matrix = System.Numerics.Matrix3x2;
+using FontStashSharp.Interfaces;
 #endif
 
 namespace Myra.Utility
@@ -17,133 +23,45 @@ namespace Myra.Utility
 			return new Point(r.Width, r.Height);
 		}
 
-		/// <summary>
-		/// Converts RGB to HSV color system
-		/// </summary>
-		/// <param name="r"></param>
-		/// <param name="g"></param>
-		/// <param name="b"></param>
-		/// <returns>hue(0-360), saturation(0-100) and value(0-100)</returns>
-		public static ColorHSV ToHSV(this Color color)
+#if PLATFORM_AGNOSTIC
+		public static Vector3 TransformToVector3(this Vector2 v, ref Matrix matrix, float z)
 		{
-			var r = color.R / 255.0f;
-			var g = color.G / 255.0f;
-			var b = color.B / 255.0f;
-
-			float h, s, v;
-			float min, max, delta;
-
-			min = Math.Min(Math.Min(r, g), b);
-			max = Math.Max(Math.Max(r, g), b);
-
-			v = max;
-
-			delta = max - min;
-
-			if (max != 0)
-				s = delta / max;
-			else
-			{
-				s = 0;
-				h = 0;
-
-				return new ColorHSV
-				{
-					H = (int)Math.Round(h),
-					S = (int)Math.Round(s),
-					V = (int)Math.Round(v),
-				};
-			}
-
-			if (delta == 0)
-				h = 0;
-			else
-			{
-
-				if (r == max)
-					h = (g - b) / delta;
-				else if (g == max)
-					h = 2 + (b - r) / delta;
-				else
-					h = 4 + (r - g) / delta;
-			}
-
-			h *= 60;
-			if (h < 0)
-				h += 360;
-
-			s *= 100;
-			v *= 100;
-
-			return new ColorHSV
-			{
-				H = (int)Math.Round(h),
-				S = (int)Math.Round(s),
-				V = (int)Math.Round(v),
-			};
+			var result = v.Transform(ref matrix);
+			return new Vector3(result.X, result.Y, z);
 		}
 
-		/// <summary>
-		/// Converts HSV color system to RGB
-		/// </summary>
-		/// <returns></returns>
-		public static Color ToRGB(this ColorHSV colorHSV)
+		public static void DrawQuad(this IMyraRenderer renderer,
+			Texture2D texture, Color color,
+			Vector2 baseOffset, ref Matrix transformation, float layerDepth,
+			Vector2 size, Rectangle textureRectangle,
+			ref VertexPositionColorTexture topLeft, ref VertexPositionColorTexture topRight,
+			ref VertexPositionColorTexture bottomLeft, ref VertexPositionColorTexture bottomRight)
 		{
-			float h = colorHSV.H;
-			if (colorHSV.H == 360) h = 359;
-			float s = colorHSV.S;
-			float v = colorHSV.V;
+			var textureSize = renderer.TextureManager.GetTextureSize(texture);
 
-			int i;
-			float f, p, q, t;
-			h = Math.Max(0.0f, Math.Min(360.0f, h));
-			s = Math.Max(0.0f, Math.Min(100.0f, s));
-			v = Math.Max(0.0f, Math.Min(100.0f, v));
-			s /= 100;
-			v /= 100;
-			h /= 60;
-			i = (int)Math.Floor(h);
-			f = h - i;
-			p = v * (1 - s);
-			q = v * (1 - s * f);
-			t = v * (1 - s * (1 - f));
+			topLeft.Position = baseOffset.TransformToVector3(ref transformation, layerDepth);
+			topLeft.TextureCoordinate = new Vector2((float)textureRectangle.X / textureSize.X,
+													(float)textureRectangle.Y / textureSize.Y);
+			topLeft.Color = color;
 
-			int r, g, b;
-			switch (i)
-			{
-				case 0:
-					r = (int)Math.Round(255 * v);
-					g = (int)Math.Round(255 * t);
-					b = (int)Math.Round(255 * p);
-					break;
-				case 1:
-					r = (int)Math.Round(255 * q);
-					g = (int)Math.Round(255 * v);
-					b = (int)Math.Round(255 * p);
-					break;
-				case 2:
-					r = (int)Math.Round(255 * p);
-					g = (int)Math.Round(255 * v);
-					b = (int)Math.Round(255 * t);
-					break;
-				case 3:
-					r = (int)Math.Round(255 * p);
-					g = (int)Math.Round(255 * q);
-					b = (int)Math.Round(255 * v);
-					break;
-				case 4:
-					r = (int)Math.Round(255 * t);
-					g = (int)Math.Round(255 * p);
-					b = (int)Math.Round(255 * v);
-					break;
-				default:
-					r = (int)Math.Round(255 * v);
-					g = (int)Math.Round(255 * p);
-					b = (int)Math.Round(255 * q);
-					break;
-			}
+			topRight.Position = (baseOffset + new Vector2(size.X, 0)).TransformToVector3(ref transformation, layerDepth);
+			topRight.TextureCoordinate = new Vector2((float)textureRectangle.Right / textureSize.X,
+												 (float)textureRectangle.Y / textureSize.Y);
+			topRight.Color = color;
 
-			return ColorStorage.CreateColor((byte)r, (byte)g, (byte)b, (byte)255);
+			bottomLeft.Position = (baseOffset + new Vector2(0, size.Y)).TransformToVector3(ref transformation, layerDepth);
+			bottomLeft.TextureCoordinate = new Vector2((float)textureRectangle.Left / textureSize.X,
+														 (float)textureRectangle.Bottom / textureSize.Y);
+			bottomLeft.Color = color;
+
+			bottomRight.Position = (baseOffset + new Vector2(size.X, size.Y)).TransformToVector3(ref transformation, layerDepth);
+			bottomRight.TextureCoordinate = new Vector2((float)textureRectangle.Right / textureSize.X,
+														(float)textureRectangle.Bottom / textureSize.Y);
+			bottomRight.Color = color;
+
+			renderer.DrawQuad(texture, ref topLeft, ref topRight, ref bottomLeft, ref bottomRight);
 		}
+
+#endif
 	}
 }

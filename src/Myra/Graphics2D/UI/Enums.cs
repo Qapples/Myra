@@ -1,12 +1,5 @@
 namespace Myra.Graphics2D.UI
 {
-	public enum TextAlign
-	{
-		Left,
-		Center,
-		Right
-	}
-
 	public enum HorizontalAlignment
 	{
 		Left,
@@ -34,5 +27,21 @@ namespace Myra.Graphics2D.UI
 	{
 		Horizontal,
 		Vertical
+	}
+
+	public enum MouseCursorType
+	{
+		Arrow,
+		IBeam,
+		Wait,
+		Crosshair,
+		WaitArrow,
+		SizeNWSE,
+		SizeNESW,
+		SizeWE,
+		SizeNS,
+		SizeAll,
+		No,
+		Hand,
 	}
 }

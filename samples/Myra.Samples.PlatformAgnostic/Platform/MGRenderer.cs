@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Drawing;
 using System.Numerics;
+using FontStashSharp;
 using FontStashSharp.Interfaces;
 using Microsoft.Xna.Framework.Graphics;
 using Myra.Graphics2D;
@@ -29,12 +30,16 @@ namespace Myra.Samples.AllWidgets
 			}
 		}
 
-		private readonly MGPlatform _platform;
+		private readonly Texture2DManager _textureManager;
 		private bool _beginCalled;
 		private readonly SpriteBatch _batch;
 		private TextureFiltering _textureFiltering;
 
-		private GraphicsDevice GraphicsDevice => _platform.GraphicsDevice;
+		public GraphicsDevice GraphicsDevice => _textureManager.Device;
+
+		public ITexture2DManager TextureManager => _textureManager;
+
+		public RendererType RendererType => RendererType.Sprite;
 
 		public Rectangle Scissor
 		{
@@ -57,16 +62,9 @@ namespace Myra.Samples.AllWidgets
 			}
 		}
 
-		public ITexture2DManager TextureManager => _platform;
-
-		public MGRenderer(MGPlatform platform)
+		public MGRenderer(GraphicsDevice device)
 		{
-			if (platform == null)
-			{
-				throw new ArgumentNullException(nameof(platform));
-			}
-
-			_platform = platform;
+			_textureManager = new Texture2DManager(device);
 			_batch = new SpriteBatch(GraphicsDevice);
 		}
 
@@ -90,7 +88,7 @@ namespace Myra.Samples.AllWidgets
 			_beginCalled = false;
 		}
 
-		public void Draw(object texture, Vector2 position, Rectangle? sourceRectangle, Color color, float rotation, Vector2 scale, float depth)
+		public void DrawSprite(object texture, Vector2 position, Rectangle? sourceRectangle, FSColor color, float rotation, Vector2 scale, float depth)
 		{
 			var xnaTexture = (Texture2D)texture;
 
@@ -105,7 +103,12 @@ namespace Myra.Samples.AllWidgets
 				depth);
 		}
 
-		public void Draw(object texture, Rectangle dest, Rectangle? src, Color color)
+		public void DrawQuad(object texture, ref FontStashSharp.Interfaces.VertexPositionColorTexture topLeft, ref FontStashSharp.Interfaces.VertexPositionColorTexture topRight, ref FontStashSharp.Interfaces.VertexPositionColorTexture bottomLeft, ref FontStashSharp.Interfaces.VertexPositionColorTexture bottomRight)
+		{
+			throw new NotImplementedException();
+		}
+
+		public void Draw(object texture, Rectangle dest, Rectangle? src, FSColor color)
 		{
 			var xnaTexture = (Texture2D)texture;
 

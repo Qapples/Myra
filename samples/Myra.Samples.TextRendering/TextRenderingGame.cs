@@ -8,19 +8,10 @@ namespace Myra.Samples.TextRendering
 	{
 		private readonly GraphicsDeviceManager _graphics;
 		private MainPanel _mainPanel;
-		private Desktop _topDesktop;
-		private Desktop _bottomDesktop;
-		private Label _labelText;
-
-		public static TextRenderingGame Instance { get; private set; }
-
-		public Desktop TopDesktop => _topDesktop;
-		public Label LabelText => _labelText;
+		private Desktop _desktop;
 
 		public TextRenderingGame()
 		{
-			Instance = this;
-
 			_graphics = new GraphicsDeviceManager(this)
 			{
 				PreferredBackBufferWidth = 1200,
@@ -36,33 +27,22 @@ namespace Myra.Samples.TextRendering
 
 			MyraEnvironment.Game = this;
 
-			_topDesktop = new Desktop();
-
-			_labelText = new Label();
-			_topDesktop.Root = _labelText;
-
-			_bottomDesktop = new Desktop
-			{
-				// Inform Myra that external text input is available
-				// So it stops translating Keys to chars
-				HasExternalTextInput = true
-			};
+			_desktop = new Desktop();
+#if MONOGAME
+			// Inform Myra that external text input is available
+			// So it stops translating Keys to chars
+			_desktop.HasExternalTextInput = true;
 
 			// Provide that text input
 			Window.TextInput += (s, a) =>
 			{
-				_bottomDesktop.OnChar(a.Character);
+				_desktop.OnChar(a.Character);
 			};
+#endif
 
 			_mainPanel = new MainPanel();
 
-			_bottomDesktop.Root = _mainPanel;
-
-			// Top desktop occupies upper half
-			_topDesktop.BoundsFetcher = () => new Rectangle(0, 0, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height / 2);
-
-			// Bottom desktop - bottom half
-			_bottomDesktop.BoundsFetcher = () => new Rectangle(0, GraphicsDevice.Viewport.Height / 2, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height / 2);
+			_desktop.Root = _mainPanel;
 		}
 
 		protected override void Draw(GameTime gameTime)
@@ -71,8 +51,7 @@ namespace Myra.Samples.TextRendering
 
 			GraphicsDevice.Clear(Color.Black);
 
-			_bottomDesktop.Render();
-			_topDesktop.Render();
+			_desktop.Render();
 		}
 	}
 }

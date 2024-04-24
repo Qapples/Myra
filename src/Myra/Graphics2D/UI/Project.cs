@@ -13,8 +13,9 @@ using Myra.Graphics2D.TextureAtlases;
 using Myra.Graphics2D.Brushes;
 using Myra.Graphics2D.UI.Properties;
 using FontStashSharp;
-using Myra.Assets;
 using Myra.Utility;
+using Myra.Graphics2D.UI.File;
+using AssetManagementBase;
 
 namespace Myra.Graphics2D.UI
 {
@@ -27,8 +28,38 @@ namespace Myra.Graphics2D.UI
 		public string TemplateMain { get; set; }
 	}
 
+	public class ObjectPosition
+	{
+		public object Object { get; private set; }
+		public int Start { get; private set; }
+		public int End { get; private set; }
+
+		public ObjectPosition(object obj, int start, int end)
+		{
+			Object = obj;
+			Start = start;
+			End = end;
+		}
+	}
+
 	public class Project
 	{
+		private struct StylesheetChanger: IDisposable
+		{
+			private readonly Stylesheet _oldStylesheet;
+
+			public StylesheetChanger(Stylesheet newStylesheet)
+			{
+				_oldStylesheet = Stylesheet.Current;
+				Stylesheet.Current = newStylesheet;
+			}
+
+			public void Dispose()
+			{
+				Stylesheet.Current = _oldStylesheet;
+			}
+		}
+
 		public const string ProportionName = "Proportion";
 		public const string DefaultProportionName = "DefaultProportion";
 		public const string DefaultColumnProportionName = "DefaultColumnProportion";
@@ -49,18 +80,17 @@ namespace Myra.Graphics2D.UI
 		public Widget Root { get; set; }
 
 		[Browsable(false)]
-		public string StylesheetPath
-		{
-			get; set;
-		}
+		public string StylesheetPath { get; set; }
 
 		[Browsable(false)]
 		[XmlIgnore]
 		public Stylesheet Stylesheet { get; set; }
 
+		[FilePath(FileDialogMode.ChooseFolder)]
+		public string DesignerRtfAssetsPath { get; set; }
+
 		static Project()
 		{
-			LegacyClassNames["Button"] = "ImageTextButton";
 			LegacyClassNames["VerticalBox"] = "VerticalStackPanel";
 			LegacyClassNames["HorizontalBox"] = "HorizontalStackPanel";
 			LegacyClassNames["TextField"] = "TextBox";
@@ -122,7 +152,7 @@ namespace Myra.Graphics2D.UI
 				return false;
 			}
 
-			if(asWidget != null && HasStylesheetValue(asWidget, p, stylesheet))
+			if (asWidget != null && HasStylesheetValue(asWidget, p, stylesheet))
 			{
 				return false;
 			}
@@ -148,7 +178,7 @@ namespace Myra.Graphics2D.UI
 			return CreateSaveContext(Stylesheet);
 		}
 
-		internal static LoadContext CreateLoadContext(IAssetManager assetManager, Stylesheet stylesheet)
+		internal static LoadContext CreateLoadContext(AssetManager assetManager)
 		{
 			Func<Type, string, object> resourceGetter = (t, name) =>
 			{
@@ -158,11 +188,11 @@ namespace Myra.Graphics2D.UI
 				}
 				else if (t == typeof(IImage))
 				{
-					return assetManager.Load<TextureRegion>(name);
+					return assetManager.LoadTextureRegion(name);
 				}
 				else if (t == typeof(SpriteFontBase))
 				{
-					return assetManager.Load<SpriteFontBase>(name);
+					return assetManager.LoadFont(name);
 				}
 
 				throw new Exception(string.Format("Type {0} isn't supported", t.Name));
@@ -171,19 +201,14 @@ namespace Myra.Graphics2D.UI
 			return new LoadContext
 			{
 				Namespaces = new[]
-				{ 
+				{
 					typeof(Widget).Namespace,
 					typeof(PropertyGrid).Namespace,
 				},
 				LegacyClassNames = LegacyClassNames,
-				ObjectCreator = (t, el) => CreateItem(t, el, stylesheet),
+				ObjectCreator = (t, el) => CreateItem(t, el),
 				ResourceGetter = resourceGetter
 			};
-		}
-
-		internal LoadContext CreateLoadContext(IAssetManager assetManager)
-		{
-			return CreateLoadContext(assetManager, Stylesheet);
 		}
 
 		public string Save()
@@ -196,40 +221,56 @@ namespace Myra.Graphics2D.UI
 			return xDoc.ToString();
 		}
 
-		public static Project LoadFromXml<T>(XDocument xDoc, IAssetManager assetManager, Stylesheet stylesheet, T handler) where T : class 
+		public static Project LoadFromXml<T>(XDocument xDoc, AssetManager assetManager = null, T handler = null) where T : class
 		{
-			var result = new Project
+			var stylesheet = Stylesheet.Current;
+			var stylesheetPathAttr = xDoc.Root.Attribute("StylesheetPath");
+			if (stylesheetPathAttr != null)
 			{
-				Stylesheet = stylesheet
-			};
+				stylesheet = assetManager.LoadStylesheet(stylesheetPathAttr.Value);
+			}
 
-			var loadContext = result.CreateLoadContext(assetManager);
-			loadContext.Load(result, xDoc.Root, handler);
+			var result = new Project();
+
+			if (stylesheetPathAttr != null)
+			{
+				if (assetManager == null)
+				{
+					throw new Exception($"assetManager couldn't be null if the project has external stylesheet");
+				}
+
+				result.Stylesheet = stylesheet;
+				using(var stylesheetChanger = new StylesheetChanger(stylesheet))
+				{ 
+					var loadContext = CreateLoadContext(assetManager);
+					loadContext.Load(result, xDoc.Root, handler);
+				}
+			}
+			else
+			{
+				var loadContext = CreateLoadContext(assetManager);
+				loadContext.Load(result, xDoc.Root, handler);
+			}
 
 			return result;
 		}
 
-		public static Project LoadFromXml<T>(string data, IAssetManager assetManager, Stylesheet stylesheet, T handler) where T : class
+		public static Project LoadFromXml<T>(string data, AssetManager assetManager = null, T handler = null) where T : class
 		{
-			return LoadFromXml(XDocument.Parse(data), assetManager, stylesheet, handler);
+			return LoadFromXml(XDocument.Parse(data), assetManager, handler);
 		}
 
-		public static Project LoadFromXml(XDocument xDoc, IAssetManager assetManager, Stylesheet stylesheet)
+		public static Project LoadFromXml(XDocument xDoc, AssetManager assetManager = null)
 		{
-			return LoadFromXml<object>(xDoc, assetManager, stylesheet, null);
+			return LoadFromXml<object>(xDoc, assetManager, null);
 		}
 
-		public static Project LoadFromXml(string data, IAssetManager assetManager, Stylesheet stylesheet)
+		public static Project LoadFromXml(string data, AssetManager assetManager = null)
 		{
-			return LoadFromXml<object>(XDocument.Parse(data), assetManager, stylesheet, null);
+			return LoadFromXml<object>(XDocument.Parse(data), assetManager, null);
 		}
 
-		public static Project LoadFromXml(string data, IAssetManager assetManager = null)
-		{
-			return LoadFromXml<object>(data, assetManager, Stylesheet.Current, null);
-		}
-
-		public static object LoadObjectFromXml<T>(string data, IAssetManager assetManager, Stylesheet stylesheet, T handler) where T : class
+		public static object LoadObjectFromXml<T>(string data, AssetManager assetManager = null, Stylesheet stylesheet = null, T handler = null, Type parentType = null) where T : class
 		{
 			XDocument xDoc = XDocument.Parse(data);
 
@@ -239,7 +280,8 @@ namespace Myra.Graphics2D.UI
 			if (name == "PropertyGrid")
 			{
 				itemType = typeof(PropertyGrid);
-			} else  if (!IsProportionName(name))
+			}
+			else if (!IsProportionName(name))
 			{
 				string newName;
 				if (LegacyClassNames.TryGetValue(name, out newName))
@@ -247,8 +289,7 @@ namespace Myra.Graphics2D.UI
 					name = newName;
 				}
 
-				var itemNamespace = typeof(Widget).Namespace;
-				itemType = typeof(Widget).Assembly.GetType(itemNamespace + "." + name);
+				itemType = GetWidgetTypeByName(name);
 			}
 			else
 			{
@@ -260,30 +301,43 @@ namespace Myra.Graphics2D.UI
 				return null;
 			}
 
-			var item = CreateItem(itemType, xDoc.Root, stylesheet);
-			var loadContext = CreateLoadContext(assetManager, stylesheet);
-			loadContext.Load(item, xDoc.Root, handler);
+			object item = null;
+			if (stylesheet != null)
+			{
+				using (var stylesheetChanger = new StylesheetChanger(stylesheet))
+				{
+					item = CreateItem(itemType, xDoc.Root);
+					var loadContext = CreateLoadContext(assetManager);
+					loadContext.Load(item, xDoc.Root, handler);
+				}
+			}
+			else
+			{
+				item = CreateItem(itemType, xDoc.Root);
+				var loadContext = CreateLoadContext(assetManager);
+				loadContext.Load(item, xDoc.Root, handler);
+			}
 
 			return item;
 		}
 
-		public static object LoadObjectFromXml(string data, IAssetManager assetManager, Stylesheet stylesheet)
-        {
+		public static object LoadObjectFromXml(string data, AssetManager assetManager, Stylesheet stylesheet)
+		{
 			return LoadObjectFromXml<object>(data, assetManager, stylesheet, null);
-        }
+		}
 
-		public object LoadObjectFromXml(string data, IAssetManager assetManager)
+		public object LoadObjectFromXml(string data, AssetManager assetManager)
 		{
 			return LoadObjectFromXml(data, assetManager, Stylesheet);
 		}
 
-		public string SaveObjectToXml(object obj, string tagName)
+		public string SaveObjectToXml(object obj, string tagName, Type parentType)
 		{
 			var saveContext = CreateSaveContext(Stylesheet);
-			return saveContext.Save(obj, true, tagName).ToString();
+			return saveContext.Save(obj, true, tagName, parentType).ToString();
 		}
 
-		private static object CreateItem(Type type, XElement element, Stylesheet stylesheet)
+		private static object CreateItem(Type type, XElement element)
 		{
 			if (typeof(Widget).IsAssignableFrom(type))
 			{
@@ -304,14 +358,12 @@ namespace Myra.Graphics2D.UI
 
 				if (acceptsStyleName)
 				{
-					var result = (Widget)Activator.CreateInstance(type, (string)null);
-
 					// Determine style name
 					var styleName = Stylesheet.DefaultStyleName;
 					var styleNameAttr = element.Attribute("StyleName");
 					if (styleNameAttr != null)
 					{
-						var stylesNames = stylesheet.GetStylesByWidgetName(type.Name);
+						var stylesNames = Stylesheet.Current.GetStylesByWidgetName(type.Name);
 						if (stylesNames != null && stylesNames.Contains(styleNameAttr.Value))
 						{
 							styleName = styleNameAttr.Value;
@@ -323,10 +375,7 @@ namespace Myra.Graphics2D.UI
 						}
 					}
 
-					// Set style
-					result.SetStyle(stylesheet, styleName);
-
-					return result;
+					return (Widget)Activator.CreateInstance(type, styleName);
 				}
 			}
 
@@ -373,7 +422,7 @@ namespace Myra.Graphics2D.UI
 				styleName = Stylesheet.DefaultStyleName;
 			}
 
-			object obj =  stylesDict[styleName];
+			object obj = stylesDict[styleName];
 
 			// Now find corresponding property
 			PropertyInfo styleProperty = null;
@@ -418,6 +467,12 @@ namespace Myra.Graphics2D.UI
 			}
 
 			return true;
+		}
+
+		public static Type GetWidgetTypeByName(string name)
+		{
+			var itemNamespace = typeof(Widget).Namespace;
+			return typeof(Widget).Assembly.GetType(itemNamespace + "." + name);
 		}
 	}
 }

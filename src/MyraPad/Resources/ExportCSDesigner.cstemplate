@@ -5,15 +5,19 @@ using Myra.Graphics2D.TextureAtlases;
 using Myra.Graphics2D.UI;
 using Myra.Graphics2D.Brushes;
 using Myra.Graphics2D.UI.Properties;
+using FontStashSharp.RichText;
+using AssetManagementBase;
 
-#if MONOGAME || FNA
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
-#elif STRIDE
+#if STRIDE
 using Stride.Core.Mathematics;
-#else
+#elif PLATFORM_AGNOSTIC
 using System.Drawing;
 using System.Numerics;
+using Color = FontStashSharp.FSColor;
+#else
+// MonoGame/FNA
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 #endif
 
 namespace $namespace$

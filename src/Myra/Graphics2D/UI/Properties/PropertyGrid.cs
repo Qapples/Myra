@@ -9,33 +9,40 @@ using Myra.Utility;
 using System.Xml.Serialization;
 using Myra.MML;
 using Myra.Graphics2D.UI.File;
-using Myra.Graphics2D.TextureAtlases;
 using System.IO;
 using Myra.Attributes;
 using FontStashSharp;
+using FontStashSharp.RichText;
 using Myra.Graphics2D.Brushes;
+using AssetManagementBase;
+using Myra.Events;
 
 #if MONOGAME || FNA
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 #elif STRIDE
 using Stride.Core.Mathematics;
+using Texture2D = Stride.Graphics.Texture;
 #else
 using System.Drawing;
 using SolidBrush = Myra.Graphics2D.Brushes.SolidBrush;
+using Color = FontStashSharp.FSColor;
 #endif
 
 namespace Myra.Graphics2D.UI.Properties
 {
-	public class PropertyGrid : SingleItemContainer<Grid>
+	public class PropertyGrid : Widget
 	{
 		private const string DefaultCategoryName = "Miscellaneous";
 
-		private class SubGrid : SingleItemContainer<Grid>
+		private class SubGrid : Widget
 		{
-			private readonly ImageButton _mark;
+			private readonly GridLayout _layout = new GridLayout();
+
+			private readonly ToggleButton _mark;
 			private readonly PropertyGrid _propertyGrid;
 
-			public ImageButton Mark
+			public ToggleButton Mark
 			{
 				get { return _mark; }
 			}
@@ -49,7 +56,7 @@ namespace Myra.Graphics2D.UI.Properties
 			{
 				get
 				{
-					var headerBounds = new Rectangle(0, 0, ActualBounds.Width, InternalChild.GetRowHeight(0));
+					var headerBounds = new Rectangle(0, 0, ActualBounds.Width, _layout.GetRowHeight(0));
 
 					return headerBounds;
 				}
@@ -67,47 +74,52 @@ namespace Myra.Graphics2D.UI.Properties
 
 			public SubGrid(PropertyGrid parent, object value, string header, string category, string filter, Record parentProperty)
 			{
-				InternalChild = new Grid
-				{
-					ColumnSpacing = 4,
-					RowSpacing = 4
-				};
+				ChildrenLayout = _layout;
 
-				InternalChild.ColumnsProportions.Add(new Proportion(ProportionType.Auto));
-				InternalChild.ColumnsProportions.Add(new Proportion(ProportionType.Fill));
-				InternalChild.RowsProportions.Add(new Proportion(ProportionType.Auto));
-				InternalChild.RowsProportions.Add(new Proportion(ProportionType.Auto));
+				_layout.ColumnSpacing = 4;
+				_layout.RowSpacing = 4;
+
+				_layout.ColumnsProportions.Add(new Proportion(ProportionType.Auto));
+				_layout.ColumnsProportions.Add(new Proportion(ProportionType.Fill));
+				_layout.RowsProportions.Add(new Proportion(ProportionType.Auto));
+				_layout.RowsProportions.Add(new Proportion(ProportionType.Auto));
 
 				_propertyGrid = new PropertyGrid(parent.PropertyGridStyle, category, parentProperty, parent)
 				{
 					Object = value,
 					Filter = filter,
 					HorizontalAlignment = HorizontalAlignment.Stretch,
-					GridColumn = 1,
-					GridRow = 1
 				};
+				Grid.SetColumn(_propertyGrid, 1);
+				Grid.SetRow(_propertyGrid, 1);
 
 				// Mark
-				_mark = new ImageButton(null)
+				var markImage = new Image();
+				var imageStyle = parent.PropertyGridStyle.MarkStyle.ImageStyle;
+				if (imageStyle != null)
 				{
-					Toggleable = true,
-					HorizontalAlignment = HorizontalAlignment.Left,
-					VerticalAlignment = VerticalAlignment.Center
-				};
-				_mark.ApplyImageButtonStyle(parent.PropertyGridStyle.MarkStyle);
+					markImage.ApplyPressableImageStyle(imageStyle);
+				}
 
-				InternalChild.Widgets.Add(_mark);
+				_mark = new ToggleButton(null)
+				{
+					HorizontalAlignment = HorizontalAlignment.Left,
+					VerticalAlignment = VerticalAlignment.Center,
+					Content = markImage
+				};
+
+				Children.Add(_mark);
 
 				_mark.PressedChanged += (sender, args) =>
 				{
 					if (_mark.IsPressed)
 					{
-						InternalChild.Widgets.Add(_propertyGrid);
+						Children.Add(_propertyGrid);
 						parent._expandedCategories.Add(category);
 					}
 					else
 					{
-						InternalChild.Widgets.Remove(_propertyGrid);
+						Children.Remove(_propertyGrid);
 						parent._expandedCategories.Remove(category);
 					}
 				};
@@ -126,11 +138,11 @@ namespace Myra.Graphics2D.UI.Properties
 				var label = new Label(null)
 				{
 					Text = header,
-					GridColumn = 1
 				};
+				Grid.SetColumn(label, 1);
 				label.ApplyLabelStyle(parent.PropertyGridStyle.LabelStyle);
 
-				InternalChild.Widgets.Add(label);
+				Children.Add(label);
 
 				HorizontalAlignment = HorizontalAlignment.Stretch;
 				VerticalAlignment = VerticalAlignment.Stretch;
@@ -151,7 +163,7 @@ namespace Myra.Graphics2D.UI.Properties
 
 			public override void InternalRender(RenderContext context)
 			{
-				if (_propertyGrid.PropertyGridStyle.SelectionHoverBackground != null && UseHoverRenderable)
+				if (_propertyGrid.PropertyGridStyle.SelectionHoverBackground != null && IsMouseInside)
 				{
 					var headerBounds = HeaderBounds;
 					if (headerBounds.Contains(ToLocal(Desktop.MousePosition)))
@@ -164,6 +176,7 @@ namespace Myra.Graphics2D.UI.Properties
 			}
 		}
 
+		private readonly GridLayout _layout = new GridLayout();
 		private readonly PropertyGrid _parentGrid;
 		private Record _parentProperty;
 		private readonly Dictionary<string, List<Record>> _records = new Dictionary<string, List<Record>>();
@@ -172,13 +185,11 @@ namespace Myra.Graphics2D.UI.Properties
 		private bool _ignoreCollections;
 		private readonly PropertyGridSettings _settings = new PropertyGridSettings();
 		private string _filter;
+		private Type _parentType;
 
 		[Browsable(false)]
 		[XmlIgnore]
-		public TreeStyle PropertyGridStyle
-		{
-			get; private set;
-		}
+		public TreeStyle PropertyGridStyle { get; private set; }
 
 		[Browsable(false)]
 		[XmlIgnore]
@@ -198,10 +209,33 @@ namespace Myra.Graphics2D.UI.Properties
 			}
 		}
 
+		/// <summary>
+		/// Used to determine the attached properties
+		/// </summary>
+		[Browsable(false)]
+		[XmlIgnore]
+		public Type ParentType
+		{
+			get
+			{
+				if (_parentGrid != null)
+				{
+					return _parentGrid.ParentType;
+				}
+
+				return _parentType;
+			}
+
+			set
+			{
+				_parentType = value;
+			}
+		}
+
 		[Browsable(false)]
 		[XmlIgnore]
 		public string Category { get; private set; }
-		
+
 		[Category("Behavior")]
 		[DefaultValue(false)]
 		public bool IgnoreCollections
@@ -228,7 +262,7 @@ namespace Myra.Graphics2D.UI.Properties
 		{
 			get
 			{
-				return InternalChild.Widgets.Count == 0;
+				return Children.Count == 0;
 			}
 		}
 
@@ -253,12 +287,12 @@ namespace Myra.Graphics2D.UI.Properties
 		{
 			get
 			{
-				return (int)InternalChild.ColumnsProportions[0].Value;
+				return (int)_layout.ColumnsProportions[0].Value;
 			}
 
 			set
 			{
-				InternalChild.ColumnsProportions[0].Value = value;
+				_layout.ColumnsProportions[0].Value = value;
 			}
 		}
 
@@ -301,18 +335,23 @@ namespace Myra.Graphics2D.UI.Properties
 		[XmlIgnore]
 		public Func<Record, object, object, bool> CustomSetter;
 
+		[Browsable(false)]
+		[XmlIgnore]
+		public Func<Record, object, Widget> CustomWidgetProvider;
+
 		public event EventHandler<GenericEventArgs<string>> PropertyChanged;
 
 		private PropertyGrid(TreeStyle style, string category, Record parentProperty, PropertyGrid parentGrid = null)
 		{
+			ChildrenLayout = _layout;
+
 			_parentGrid = parentGrid;
-			InternalChild = new Grid();
 
 			_parentProperty = parentProperty;
-			InternalChild.ColumnSpacing = 8;
-			InternalChild.RowSpacing = 8;
-			InternalChild.ColumnsProportions.Add(new Proportion(ProportionType.Part, 1));
-			InternalChild.ColumnsProportions.Add(new Proportion(ProportionType.Part, 1));
+			_layout.ColumnSpacing = 8;
+			_layout.RowSpacing = 8;
+			_layout.ColumnsProportions.Add(new Proportion(ProportionType.Part, 1));
+			_layout.ColumnsProportions.Add(new Proportion(ProportionType.Part, 1));
 
 			Category = category;
 
@@ -324,6 +363,10 @@ namespace Myra.Graphics2D.UI.Properties
 			HorizontalAlignment = HorizontalAlignment.Stretch;
 			VerticalAlignment = VerticalAlignment.Stretch;
 			Filter = string.Empty;
+
+			this.CustomWidgetProvider = parentGrid?.CustomWidgetProvider;
+			this.CustomSetter = parentGrid?.CustomSetter;
+			this.CustomValuesProvider = parentGrid?.CustomValuesProvider;
 		}
 
 		public PropertyGrid(TreeStyle style, string category) : this(style, category, null)
@@ -370,51 +413,57 @@ namespace Myra.Graphics2D.UI.Properties
 			record.SetValue(obj, value);
 		}
 
-		private ComboBox CreateCustomValuesEditor(Record record, object[] customValues, bool hasSetter)
+		private ComboView CreateCustomValuesEditor(Record record, object[] customValues, bool hasSetter)
 		{
 			var propertyType = record.Type;
 			var value = record.GetValue(_object);
 
-			var cb = new ComboBox();
+			var cv = new ComboView();
 			foreach (var v in customValues)
 			{
-				cb.Items.Add(new ListItem(v.ToString(), null, v));
+				var label = new Label
+				{
+					Text = v.ToString(),
+					Tag = v
+				};
+
+				cv.Widgets.Add(label);
 			}
 
-			cb.SelectedIndex = Array.IndexOf(customValues, value);
+			cv.SelectedIndex = Array.IndexOf(customValues, value);
 			if (hasSetter)
 			{
-				cb.SelectedIndexChanged += (sender, args) =>
+				cv.SelectedIndexChanged += (sender, args) =>
 				{
-					var item = cb.SelectedIndex != null ? customValues[cb.SelectedIndex.Value] : null;
+					var item = cv.SelectedIndex != null ? customValues[cv.SelectedIndex.Value] : null;
 					SetValue(record, _object, item);
 					FireChanged(propertyType.Name);
 				};
 			}
 			else
 			{
-				cb.Enabled = false;
+				cv.Enabled = false;
 			}
 
-			return cb;
+			return cv;
 		}
 
-		private CheckBox CreateBooleanEditor(Record record, bool hasSetter)
+		private CheckButton CreateBooleanEditor(Record record, bool hasSetter)
 		{
 			var propertyType = record.Type;
 			var value = record.GetValue(_object);
 
 			var isChecked = (bool)value;
-			var cb = new CheckBox
+			var cb = new CheckButton
 			{
-				IsPressed = isChecked
+				IsChecked = isChecked
 			};
 
 			if (hasSetter)
 			{
 				cb.Click += (sender, args) =>
 				{
-					SetValue(record, _object, cb.IsPressed);
+					SetValue(record, _object, cb.IsChecked);
 					FireChanged(propertyType.Name);
 				};
 			}
@@ -454,7 +503,7 @@ namespace Myra.Graphics2D.UI.Properties
 
 			var image = new Image
 			{
-				Renderable = DefaultAssets.WhiteRegion,
+				Renderable = Stylesheet.Current.WhiteRegion,
 				VerticalAlignment = VerticalAlignment.Center,
 				Width = 32,
 				Height = 16,
@@ -463,14 +512,17 @@ namespace Myra.Graphics2D.UI.Properties
 
 			subGrid.Widgets.Add(image);
 
-			var button = new ImageTextButton
+			var button = new Button
 			{
-				Text = "Change...",
-				ContentHorizontalAlignment = HorizontalAlignment.Center,
 				Tag = value,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
-				GridColumn = 1
+				Content = new Label
+				{
+					HorizontalAlignment = HorizontalAlignment.Center,
+					Text = "Change..."
+				}
 			};
+			Grid.SetColumn(button, 1);
 
 			subGrid.Widgets.Add(button);
 
@@ -530,7 +582,7 @@ namespace Myra.Graphics2D.UI.Properties
 
 			var image = new Image
 			{
-				Renderable = DefaultAssets.WhiteRegion,
+				Renderable = Stylesheet.Current.WhiteRegion,
 				VerticalAlignment = VerticalAlignment.Center,
 				Width = 32,
 				Height = 16,
@@ -539,14 +591,17 @@ namespace Myra.Graphics2D.UI.Properties
 
 			subGrid.Widgets.Add(image);
 
-			var button = new ImageTextButton
+			var button = new Button
 			{
-				Text = "Change...",
-				ContentHorizontalAlignment = HorizontalAlignment.Center,
 				Tag = value,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
-				GridColumn = 1
+				Content = new Label
+				{
+					Text = "Change...",
+					HorizontalAlignment = HorizontalAlignment.Center,
+				}
 			};
+			Grid.SetColumn(button, 1);
 
 			subGrid.Widgets.Add(button);
 
@@ -587,7 +642,7 @@ namespace Myra.Graphics2D.UI.Properties
 			return subGrid;
 		}
 
-		private ComboBox CreateEnumEditor(Record record, bool hasSetter)
+		private ComboView CreateEnumEditor(Record record, bool hasSetter)
 		{
 			var propertyType = record.Type;
 			var value = record.GetValue(_object);
@@ -596,16 +651,23 @@ namespace Myra.Graphics2D.UI.Properties
 			var enumType = isNullable ? propertyType.GetNullableType() : propertyType;
 			var values = Enum.GetValues(enumType);
 
-			var cb = new ComboBox();
+			var cv = new ComboView();
 
 			if (isNullable)
 			{
-				cb.Items.Add(new ListItem(string.Empty, null, null));
+				cv.Widgets.Add(new Label
+				{
+					Text = string.Empty
+				});
 			}
 
 			foreach (var v in values)
 			{
-				cb.Items.Add(new ListItem(v.ToString(), null, v));
+				cv.Widgets.Add(new Label
+				{
+					Text = v.ToString(),
+					Tag = v
+				});
 			}
 
 			var selectedIndex = Array.IndexOf(values, value);
@@ -613,25 +675,25 @@ namespace Myra.Graphics2D.UI.Properties
 			{
 				++selectedIndex;
 			}
-			cb.SelectedIndex = selectedIndex;
+			cv.SelectedIndex = selectedIndex;
 
 			if (hasSetter)
 			{
-				cb.SelectedIndexChanged += (sender, args) =>
+				cv.SelectedIndexChanged += (sender, args) =>
 				{
-					if (cb.SelectedIndex != -1)
+					if (cv.SelectedIndex != -1)
 					{
-						SetValue(record, _object, cb.SelectedItem.Tag);
+						SetValue(record, _object, cv.SelectedItem.Tag);
 						FireChanged(enumType.Name);
 					}
 				};
 			}
 			else
 			{
-				cb.Enabled = false;
+				cv.Enabled = false;
 			}
 
-			return cb;
+			return cv;
 		}
 
 		private SpinButton CreateNumericEditor(Record record, bool hasSetter)
@@ -805,14 +867,17 @@ namespace Myra.Graphics2D.UI.Properties
 
 			subGrid.Widgets.Add(label);
 
-			var button = new ImageTextButton
+			var button = new Button
 			{
-				Text = "Change...",
-				ContentHorizontalAlignment = HorizontalAlignment.Center,
 				Tag = value,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
-				GridColumn = 1
+				Content = new Label
+				{
+					Text = "Change...",
+					HorizontalAlignment = HorizontalAlignment.Center,
+				}
 			};
+			Grid.SetColumn(button, 1);
 
 			button.Click += (sender, args) =>
 			{
@@ -834,7 +899,7 @@ namespace Myra.Graphics2D.UI.Properties
 			return subGrid;
 		}
 
-		private Grid CreateFileEditor<T>(Record record, bool hasSetter, string filter)
+		private Grid CreateFileEditor<T>(Record record, bool hasSetter, string filter, Func<string, T> loader)
 		{
 			if (Settings.AssetManager == null)
 			{
@@ -859,6 +924,10 @@ namespace Myra.Graphics2D.UI.Properties
 			{
 				baseObject.Resources.TryGetValue(record.Name, out path);
 			}
+			else if (Settings.ImagePropertyValueGetter != null)
+			{
+				path = Settings.ImagePropertyValueGetter(record.Name);
+			}
 
 			var textBox = new TextBox
 			{
@@ -867,14 +936,17 @@ namespace Myra.Graphics2D.UI.Properties
 
 			subGrid.Widgets.Add(textBox);
 
-			var button = new ImageTextButton
+			var button = new Button
 			{
-				Text = "Change...",
-				ContentHorizontalAlignment = HorizontalAlignment.Center,
 				Tag = value,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
-				GridColumn = 1
+				Content = new Label
+				{
+					Text = "Change...",
+					HorizontalAlignment = HorizontalAlignment.Center,
+				}
 			};
+			Grid.SetColumn(button, 1);
 
 			subGrid.Widgets.Add(button);
 
@@ -895,7 +967,8 @@ namespace Myra.Graphics2D.UI.Properties
 							filePath = Path.Combine(Settings.BasePath, filePath);
 						}
 						dlg.FilePath = filePath;
-					} else if (!string.IsNullOrEmpty(Settings.BasePath))
+					}
+					else if (!string.IsNullOrEmpty(Settings.BasePath))
 					{
 						dlg.Folder = Settings.BasePath;
 					}
@@ -909,24 +982,27 @@ namespace Myra.Graphics2D.UI.Properties
 
 						try
 						{
-							var newValue = Settings.AssetManager.Load<T>(dlg.FilePath);
-
 							var filePath = dlg.FilePath;
 							if (!string.IsNullOrEmpty(Settings.BasePath))
 							{
 								filePath = PathUtils.TryToMakePathRelativeTo(filePath, Settings.BasePath);
 							}
 
+							var newValue = loader(filePath);
 							textBox.Text = filePath;
 							SetValue(record, _object, newValue);
 							if (baseObject != null)
 							{
 								baseObject.Resources[record.Name] = filePath;
 							}
+							else if (Settings.ImagePropertyValueSetter != null)
+							{
+								Settings.ImagePropertyValueSetter(record.Name, filePath);
+							}
 
 							FireChanged(propertyType.Name);
 						}
-						catch(Exception)
+						catch (Exception)
 						{
 
 						}
@@ -941,6 +1017,111 @@ namespace Myra.Graphics2D.UI.Properties
 			}
 
 			return subGrid;
+		}
+
+		private Widget CreateAttributeFileEditor(Record record, bool hasSetter, FilePathAttribute attribute)
+		{
+			var propertyType = record.Type;
+			var value = record.GetValue(_object);
+
+			var result = new HorizontalStackPanel
+			{
+				Spacing = 8
+			};
+
+			TextBox path = null;
+			if (attribute.ShowPath)
+			{
+				path = new TextBox
+				{
+					Readonly = true,
+					HorizontalAlignment = HorizontalAlignment.Stretch
+				};
+
+				if (value != null)
+				{
+					path.Text = value.ToString();
+				}
+
+				StackPanel.SetProportionType(path, ProportionType.Fill);
+				result.Widgets.Add(path);
+			}
+
+			var button = new Button
+			{
+				Tag = value,
+				HorizontalAlignment = HorizontalAlignment.Stretch,
+				Content = new Label
+				{
+					Text = "Change...",
+					HorizontalAlignment = HorizontalAlignment.Center,
+				}
+			};
+			Grid.SetColumn(button, 1);
+
+			if (hasSetter)
+			{
+				button.Click += (sender, args) =>
+				{
+					var dlg = new FileDialog(attribute.DialogMode)
+					{
+						Filter = attribute.Filter
+					};
+
+					if (value != null)
+					{
+						var filePath = value.ToString();
+						if (!Path.IsPathRooted(filePath) && !string.IsNullOrEmpty(Settings.BasePath))
+						{
+							filePath = Path.Combine(Settings.BasePath, filePath);
+						}
+						dlg.FilePath = filePath;
+					}
+					else if (!string.IsNullOrEmpty(Settings.BasePath))
+					{
+						dlg.Folder = Settings.BasePath;
+					}
+
+					dlg.Closed += (s, a) =>
+					{
+						if (!dlg.Result)
+						{
+							return;
+						}
+
+						try
+						{
+							var filePath = dlg.FilePath;
+							if (!string.IsNullOrEmpty(Settings.BasePath))
+							{
+								filePath = PathUtils.TryToMakePathRelativeTo(filePath, Settings.BasePath);
+							}
+
+							if (path != null)
+							{
+								path.Text = filePath;
+							}
+
+							SetValue(record, _object, filePath);
+
+							FireChanged(propertyType.Name);
+						}
+						catch (Exception)
+						{
+						}
+					};
+
+					dlg.ShowModal(Desktop);
+				};
+			}
+			else
+			{
+				button.Enabled = false;
+			}
+
+			result.Widgets.Add(button);
+
+			return result;
 		}
 
 		private void FillSubGrid(ref int y, IReadOnlyList<Record> records)
@@ -964,7 +1145,11 @@ namespace Myra.Graphics2D.UI.Properties
 
 				Proportion rowProportion;
 				object[] customValues = null;
-				if (CustomValuesProvider != null && (customValues = CustomValuesProvider(record)) != null)
+				if ((valueWidget = CustomWidgetProvider?.Invoke(record, _object)) != null)
+				{
+
+				}
+				else if (CustomValuesProvider != null && (customValues = CustomValuesProvider(record)) != null)
 				{
 					if (customValues.Length == 0)
 					{
@@ -991,6 +1176,11 @@ namespace Myra.Graphics2D.UI.Properties
 
 					valueWidget = CreateNumericEditor(record, hasSetter);
 				}
+				else if (propertyType == typeof(string) && record.FindAttribute<FilePathAttribute>() != null)
+				{
+					var filePathAttr = record.FindAttribute<FilePathAttribute>();
+					valueWidget = CreateAttributeFileEditor(record, hasSetter, filePathAttr);
+				}
 				else if (propertyType == typeof(string) || propertyType.IsPrimitive || propertyType.IsNullablePrimitive())
 				{
 					valueWidget = CreateStringEditor(record, hasSetter);
@@ -1012,7 +1202,7 @@ namespace Myra.Graphics2D.UI.Properties
 				}
 				else if (propertyType == typeof(SpriteFontBase))
 				{
-					valueWidget = CreateFileEditor<SpriteFontBase>(record, hasSetter, "*.fnt");
+					valueWidget = CreateFileEditor(record, hasSetter, "*.fnt", name => Settings.AssetManager.LoadFont(name));
 				}
 				else if (propertyType == typeof(IBrush))
 				{
@@ -1020,8 +1210,14 @@ namespace Myra.Graphics2D.UI.Properties
 				}
 				else if (propertyType == typeof(IImage))
 				{
-					valueWidget = CreateFileEditor<TextureRegion>(record, hasSetter, "*.png|*.jpg|*.bmp|*.gif");
+					valueWidget = CreateFileEditor(record, hasSetter, "*.png|*.jpg|*.bmp|*.gif", name => Settings.AssetManager.LoadTextureRegion(name));
 				}
+#if !PLATFORM_AGNOSTIC
+				else if (propertyType == typeof(Texture2D))
+				{
+					valueWidget = CreateFileEditor(record, hasSetter, "*.png|*.jpg|*.bmp|*.gif", name => Settings.AssetManager.LoadTexture2D(MyraEnvironment.GraphicsDevice, name));
+				}
+#endif
 				else
 				{
 					// Subgrid
@@ -1029,16 +1225,14 @@ namespace Myra.Graphics2D.UI.Properties
 					{
 						if (PassesFilter(record.Name))
 						{
-							var subGrid = new SubGrid(this, value, record.Name, DefaultCategoryName, string.Empty, record)
-							{
-								GridColumnSpan = 2,
-								GridRow = y
-							};
+							var subGrid = new SubGrid(this, value, record.Name, DefaultCategoryName, string.Empty, record);
+							Grid.SetColumnSpan(subGrid, 2);
+							Grid.SetRow(subGrid, y);
 
-							InternalChild.Widgets.Add(subGrid);
+							Children.Add(subGrid);
 
 							rowProportion = new Proportion(ProportionType.Auto);
-							InternalChild.RowsProportions.Add(rowProportion);
+							_layout.RowsProportions.Add(rowProportion);
 							++y;
 						}
 
@@ -1074,21 +1268,21 @@ namespace Myra.Graphics2D.UI.Properties
 				{
 					Text = name,
 					VerticalAlignment = VerticalAlignment.Center,
-					GridColumn = 0,
-					GridRow = oldY
 				};
+				Grid.SetColumn(nameLabel, 0);
+				Grid.SetRow(nameLabel, oldY);
 
-				InternalChild.Widgets.Add(nameLabel);
+				Children.Add(nameLabel);
 
-				valueWidget.GridColumn = 1;
-				valueWidget.GridRow = oldY;
+				Grid.SetColumn(valueWidget, 1);
+				Grid.SetRow(valueWidget, oldY);
 				valueWidget.HorizontalAlignment = HorizontalAlignment.Stretch;
 				valueWidget.VerticalAlignment = VerticalAlignment.Top;
 
-				InternalChild.Widgets.Add(valueWidget);
+				Children.Add(valueWidget);
 
 				rowProportion = new Proportion(ProportionType.Auto);
-				InternalChild.RowsProportions.Add(rowProportion);
+				_layout.RowsProportions.Add(rowProportion);
 				++y;
 			}
 		}
@@ -1105,8 +1299,8 @@ namespace Myra.Graphics2D.UI.Properties
 
 		public void Rebuild()
 		{
-			InternalChild.RowsProportions.Clear();
-			InternalChild.Widgets.Clear();
+			_layout.RowsProportions.Clear();
+			Children.Clear();
 			_records.Clear();
 			_expandedCategories.Clear();
 
@@ -1115,6 +1309,7 @@ namespace Myra.Graphics2D.UI.Properties
 				return;
 			}
 
+			// Properties
 			var properties = from p in _object.GetType().GetProperties() select p;
 			var records = new List<Record>();
 			foreach (var property in properties)
@@ -1152,6 +1347,7 @@ namespace Myra.Graphics2D.UI.Properties
 				records.Add(record);
 			}
 
+			// Fields
 			var fields = from f in _object.GetType().GetFields() select f;
 			foreach (var field in fields)
 			{
@@ -1175,7 +1371,6 @@ namespace Myra.Graphics2D.UI.Properties
 					hasSetter = false;
 				}
 
-
 				var record = new FieldRecord(field)
 				{
 					HasSetter = hasSetter,
@@ -1183,6 +1378,22 @@ namespace Myra.Graphics2D.UI.Properties
 				};
 
 				records.Add(record);
+			}
+
+			// Attached properties
+			var asWidget = _object as Widget;
+			if (asWidget != null && ParentType != null)
+			{
+				var attachedProperties = AttachedPropertiesRegistry.GetPropertiesOfType(ParentType);
+				foreach (var attachedProperty in attachedProperties)
+				{
+					var record = new AttachedPropertyRecord(attachedProperty)
+					{
+						Category = attachedProperty.OwnerType.Name
+					};
+
+					records.Add(record);
+				}
 			}
 
 			// Sort by categories
@@ -1227,18 +1438,17 @@ namespace Myra.Graphics2D.UI.Properties
 					continue;
 				}
 
-				var subGrid = new SubGrid(this, Object, category.Key, category.Key, Filter, null)
-				{
-					GridColumnSpan = 2,
-					GridRow = y
-				};
+				var subGrid = new SubGrid(this, Object, category.Key, category.Key, Filter, null);
+				Grid.SetColumnSpan(subGrid, 2);
+				Grid.SetRow(subGrid, y); ;
+
 
 				if (subGrid.IsEmpty)
 				{
 					continue;
 				}
 
-				InternalChild.Widgets.Add(subGrid);
+				Children.Add(subGrid);
 
 				if (_expandedCategories.Contains(category.Key))
 				{
@@ -1246,7 +1456,7 @@ namespace Myra.Graphics2D.UI.Properties
 				}
 
 				var rp = new Proportion(ProportionType.Auto);
-				InternalChild.RowsProportions.Add(rp);
+				_layout.RowsProportions.Add(rp);
 
 				y++;
 			}

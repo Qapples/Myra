@@ -49,14 +49,16 @@ namespace Myra.Samples.ObjectEditor
 
 			MyraEnvironment.Game = this;
 
-			_font = DefaultAssets.UIStylesheet.Fonts.Values.First();
+			_font = DefaultAssets.DefaultStylesheet.Fonts.Values.First();
 
 			var root = new Panel();
 
-			var showButton = new TextButton
+			var showButton = new ToggleButton
 			{
-				Text = "Show",
-				Toggleable = true
+				Content = new Label
+				{
+					Text = "Show",
+				}
 			};
 
 			showButton.PressedChanged += ShowButton_PressedChanged;
@@ -76,9 +78,30 @@ namespace Myra.Samples.ObjectEditor
 
 			var propertyGrid = new PropertyGrid
 			{
-				Object = _player,
 				Width = 350
 			};
+
+
+			propertyGrid.CustomWidgetProvider = new System.Func<Record, object, Widget>((r, obj) =>
+			{
+				RenderAsSliderAttribute att;
+				if (r.Type == typeof(int) && (att = r.FindAttribute<RenderAsSliderAttribute>()) != null)
+				{
+					var value = (int)r.GetValue(obj);
+					return new HorizontalProgressBar()
+					{
+						Minimum = att.Min,
+						Maximum = att.Max,
+						Value = value,
+						HorizontalAlignment = HorizontalAlignment.Stretch,
+						Height = 20
+					};
+				}
+
+				return null;
+			});
+
+			propertyGrid.Object = _player;
 
 			_windowEditor = new Window
 			{
@@ -111,7 +134,7 @@ namespace Myra.Samples.ObjectEditor
 
 		private void ShowButton_PressedChanged(object sender, System.EventArgs e)
 		{
-			var button = (TextButton)sender;
+			var button = (ToggleButton)sender;
 			if (button.IsPressed)
 			{
 				_windowEditor.Show(_desktop, _lastPosition);
